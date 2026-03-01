@@ -161,7 +161,92 @@ iommu@fde4b000 {
 */
 
 /* ──────────────────────────────────────────────────────────────
- * 4. Prevent vdd_npu regulator from being disabled
+ * 4. Add NPU OPP table (for devfreq DVFS support)
+ *
+ * Insert as a top-level node.  The NPU node must reference it
+ * via "operating-points-v2 = <&npu_opp_table>;" (or the numeric
+ * phandle equivalent).
+ *
+ * Frequency/voltage values are taken from the downstream RK3568
+ * BSP OPP table (rockchip-linux/kernel develop-6.1), using the
+ * most conservative voltage column (-L0).
+ *
+ * 900 MHz and 1 GHz OPPs are omitted: downstream marks them as
+ * unsupported on certain SoC bins, and we have no reliable way
+ * to determine the bin type without Rockchip's private pvtm/
+ * leakage nvmem infrastructure.
+ * ────────────────────────────────────────────────────────────── */
+
+/*
+npu_opp_table: npu-opp-table {
+    compatible = "operating-points-v2";
+
+    opp-200000000 {
+        opp-hz = /bits/ 64 <200000000>;
+        opp-microvolt = <850000 850000 1000000>;
+    };
+    opp-297000000 {
+        opp-hz = /bits/ 64 <297000000>;
+        opp-microvolt = <850000 850000 1000000>;
+    };
+    opp-400000000 {
+        opp-hz = /bits/ 64 <400000000>;
+        opp-microvolt = <850000 850000 1000000>;
+    };
+    opp-600000000 {
+        opp-hz = /bits/ 64 <600000000>;
+        opp-microvolt = <850000 850000 1000000>;
+    };
+    opp-700000000 {
+        opp-hz = /bits/ 64 <700000000>;
+        opp-microvolt = <875000 875000 1000000>;
+    };
+    opp-800000000 {
+        opp-hz = /bits/ 64 <800000000>;
+        opp-microvolt = <925000 925000 1000000>;
+    };
+};
+*/
+
+/* Numeric-phandle form (OrangePi 3B, new phandle = 0x267):
+
+npu-opp-table {
+    compatible = "operating-points-v2";
+    phandle = <0x267>;
+
+    opp-200000000 {
+        opp-hz = /bits/ 64 <200000000>;
+        opp-microvolt = <0xcf850 0xcf850 0xf4240>;
+    };
+    opp-297000000 {
+        opp-hz = /bits/ 64 <297000000>;
+        opp-microvolt = <0xcf850 0xcf850 0xf4240>;
+    };
+    opp-400000000 {
+        opp-hz = /bits/ 64 <400000000>;
+        opp-microvolt = <0xcf850 0xcf850 0xf4240>;
+    };
+    opp-600000000 {
+        opp-hz = /bits/ 64 <600000000>;
+        opp-microvolt = <0xcf850 0xcf850 0xf4240>;
+    };
+    opp-700000000 {
+        opp-hz = /bits/ 64 <700000000>;
+        opp-microvolt = <0xd59f8 0xd59f8 0xf4240>;
+    };
+    opp-800000000 {
+        opp-hz = /bits/ 64 <800000000>;
+        opp-microvolt = <0xe1d48 0xe1d48 0xf4240>;
+    };
+};
+
+Then add to the NPU node:
+    operating-points-v2 = <0x267>;
+
+*/
+
+/* ──────────────────────────────────────────────────────────────
+ * 5. Prevent vdd_npu regulator from being disabled
  *
  * Add "regulator-always-on;" to the DCDC_REG4 node (vdd_npu).
  * Without this, the kernel regulator framework disables vdd_npu

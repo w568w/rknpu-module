@@ -1385,6 +1385,7 @@ static int rknpu_probe(struct platform_device *pdev)
 	mutex_init(&rknpu_dev->power_lock);
 	mutex_init(&rknpu_dev->reset_lock);
 	mutex_init(&rknpu_dev->domain_lock);
+	mutex_init(&rknpu_dev->devfreq_lock);
 	for (i = 0; i < config->num_irqs; i++) {
 		INIT_LIST_HEAD(&rknpu_dev->subcore_datas[i].todo_list);
 		init_waitqueue_head(&rknpu_dev->subcore_datas[i].job_done_wq);

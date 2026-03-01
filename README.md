@@ -56,12 +56,13 @@ make KDIR=/path/to/arm64-kernel-headers
 
 Mainline DTBs do not include an NPU node.
 
-See [`dts/rk3566-rknpu.dts`](dts/rk3566-rknpu.dts) for the full node definitions. At least the following 4 modifications are required to enable the NPU:
+See [`dts/rk3566-rknpu.dts`](dts/rk3566-rknpu.dts) for the full node definitions. At least the following 5 modifications are required to enable the NPU:
 
 1. **NPU power domain**: add `power-domain@6` (PD_NPU) under the `power-controller` node.
 2. **NPU device node**: add `npu@fde40000`.
 3. **IOMMU node**: add `iommu@fde4b000` with `status = "disabled"` (see section 6.1).
-4. **vdd_npu regulator**: add `regulator-always-on` to the PMIC `DCDC_REG4` node.
+4. **NPU OPP table**: add `npu-opp-table` node for devfreq DVFS support (see section 5.1).
+5. **vdd_npu regulator**: add `regulator-always-on` to the PMIC `DCDC_REG4` node.
 
 Workflow:
 
@@ -88,9 +89,36 @@ dmesg | grep rknpu
 # Expected:
 #   RKNPU fde40000.npu: RKNPU: rknpu iommu device-tree entry not found!, using non-iommu mode
 #   [drm] Initialized rknpu 0.9.8 for fde40000.npu on minor X
+#   RKNPU fde40000.npu: RKNPU: devfreq enabled, initial freq: 594000000 Hz, volt: 900000 uV
 
 ls -l /dev/dri/renderD*
 ```
+
+### 5.1. Devfreq (DVFS)
+
+The driver supports dynamic voltage and frequency scaling via the standard Linux devfreq framework. When an OPP table is present in the DTB, the driver automatically registers a devfreq device at `/sys/class/devfreq/fde40000.npu/`.
+
+Available frequencies (RK3566): 200 / 297 / 400 / 600 / 700 / 800 MHz.
+
+```sh
+# Check current frequency
+cat /sys/class/devfreq/fde40000.npu/cur_freq
+
+# List available frequencies
+cat /sys/class/devfreq/fde40000.npu/available_frequencies
+
+# Switch to manual frequency control
+echo userspace > /sys/class/devfreq/fde40000.npu/governor
+echo 800000000 > /sys/class/devfreq/fde40000.npu/min_freq
+echo 800000000 > /sys/class/devfreq/fde40000.npu/max_freq
+
+# Restore automatic governor
+echo rknpu_ondemand > /sys/class/devfreq/fde40000.npu/governor
+echo 200000000 > /sys/class/devfreq/fde40000.npu/min_freq
+echo 800000000 > /sys/class/devfreq/fde40000.npu/max_freq
+```
+
+If the OPP table is missing from the DTB, devfreq is silently skipped and the NPU runs at the fixed clock rate set by `assigned-clock-rates` (600 MHz).
 
 ## 6. Known Issues
 
@@ -100,13 +128,7 @@ The RK3566 IOMMU v2 hardware cannot access page tables at physical addresses abo
 
 Adding `mem=3840M` to the kernel command line works around this (forces all allocations below 4 GB) at the cost of smaller RAM. The current approach is to disable IOMMU (`status = "disabled"` in DTB) and run in non-IOMMU mode. This is a bug in `drivers/iommu/rockchip-iommu.c` and cannot be fixed from an out-of-tree module.
 
-### 6.2. Devfreq Disabled
-
-NPU dynamic frequency scaling is disabled (`RKNPU_NO_DEVFREQ`). The NPU runs at the fixed clock rate set by `assigned-clock-rates` in the DTB (600 MHz). 
-
-Rockchip's devfreq implementation depends on many vendor-private APIs (`rockchip_opp_select.h`, `rockchip_system_monitor.h`, etc.) that are absent from mainline kernels. I may investigate re-enabling devfreq in the future, but it is not a priority since the NPU performs well at a fixed 600 MHz.
-
-### 6.3. Only Tested on RK3566
+### 6.2. Only Tested on RK3566
 
 The driver code supports RK3568, RK3588, and other SoCs, but has only been tested on RK3566 (OrangePi 3B). Other SoCs require their own DTB modifications and testing.
 

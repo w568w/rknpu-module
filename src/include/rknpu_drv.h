@@ -141,6 +141,7 @@ struct rknpu_device {
 	struct ipa_power_model_data *model_data;
 	struct thermal_cooling_device *devfreq_cooling;
 	struct devfreq *devfreq;
+	struct mutex devfreq_lock;
 	unsigned long ondemand_freq;
 	struct rockchip_opp_info opp_info;
 	unsigned long current_freq;
