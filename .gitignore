@@ -1,0 +1,17 @@
+# Kernel module build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.order
+*.symvers
+.*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+
+# Kernel headers (synced from SBC, too large for git)
+kernel-headers/
+
+# Compiled DTB binaries (keep .dts source only)
+dts/*.dtb
