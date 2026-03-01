@@ -110,6 +110,20 @@ Rockchip's devfreq implementation depends on many vendor-private APIs (`rockchip
 
 The driver code supports RK3568, RK3588, and other SoCs, but has only been tested on RK3566 (OrangePi 3B). Other SoCs require their own DTB modifications and testing.
 
-## 7. License
+## 7. FAQ
+
+**Q: Why not just use [Rocket](https://gitlab.freedesktop.org/mesa/mesa/-/tree/main/drivers/accel/rocket)?**
+
+Rocket only supports the RK3588 and newer SoCs. The NPU in RK3566/RK3568 has architectural differences, and the Rocket project has no plans to reverse-engineer support for it.
+
+**Q: I'm not using DietPi OS. Will this work?**
+
+As long as you are running a sufficiently recent Armbian kernel, this module should be distribution-agnostic.
+
+## 8. See Also
+
+- [DietPi#7301 — NPU support for OrangePi 3B](https://github.com/MichaIng/DietPi/issues/7301)
+
+## 9. License
 
 GPL v2, consistent with the original Rockchip driver source.
