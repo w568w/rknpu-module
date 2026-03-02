@@ -52,33 +52,33 @@ sudo depmod -a
 make KDIR=/path/to/arm64-kernel-headers
 ```
 
-## 4. Device Tree Modifications
+## 4. Device Tree Overlay
 
-Mainline DTBs do not include an NPU node.
+Mainline DTBs do not include an NPU node. This project provides a DT overlay ([`dts/rk3566-rknpu-overlay.dts`](dts/rk3566-rknpu-overlay.dts)) that adds the required nodes at boot time without modifying the original DTB.
 
-See [`dts/rk3566-rknpu.dts`](dts/rk3566-rknpu.dts) for the full node definitions. At least the following 5 modifications are required to enable the NPU:
+### 4.1. Build the Overlay
 
-1. **NPU power domain**: add `power-domain@6` (PD_NPU) under the `power-controller` node.
-2. **NPU device node**: add `npu@fde40000`.
-3. **IOMMU node**: add `iommu@fde4b000` with `status = "disabled"` (see section 6.1).
-4. **NPU OPP table**: add `npu-opp-table` node for devfreq DVFS support (see section 5.1).
-5. **vdd_npu regulator**: add `regulator-always-on` to the PMIC `DCDC_REG4` node.
-
-Workflow:
+Requires `device-tree-compiler` and kernel headers with `dt-bindings/`.
 
 ```sh
-# 1. Fetch and decompile the DTB
-scp root@<device>:/boot/dtb/rockchip/<board>.dtb device.dtb
-dtc -I dtb -O dts device.dtb > device.dts
-
-# 2. Edit device.dts following dts/rk3566-rknpu.dts
-# Note: phandle values are board-specific — look them up in the decompiled DTS.
-
-# 3. Recompile and deploy
-dtc -I dts -O dtb -o device-modified.dtb device.dts
-scp device-modified.dtb root@<device>:/boot/dtb/rockchip/<board>.dtb
-# 4. Reboot!
+make dtbo
+# or, with explicit kernel headers path:
+make dtbo KDIR=/usr/src/linux-headers-$(uname -r)/build
 ```
+
+### 4.2. Install and Enable
+
+```sh
+sudo make install-dtbo
+```
+
+Then edit `/boot/dietpiEnv.txt` (or `/boot/armbianEnv.txt`):
+
+```
+user_overlays=rk3566-rknpu
+```
+
+Reboot to apply.
 
 ## 5. Enabling the Driver and Verifying
 

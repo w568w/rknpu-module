@@ -19,13 +19,30 @@ else
   CROSS_COMPILE ?= aarch64-linux-gnu-
 endif
 
-.PHONY: all clean install
+# DT overlay
+DTS_DIR     := $(CURDIR)/dts
+OVERLAY_SRC := $(DTS_DIR)/rk3566-rknpu-overlay.dts
+OVERLAY_PP  := $(OVERLAY_SRC).preprocessed
+OVERLAY_OUT := $(DTS_DIR)/rk3566-rknpu.dtbo
+
+.PHONY: all clean install dtbo install-dtbo
 
 all:
 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(CURDIR) modules
 
 clean:
 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(CURDIR) clean
+	rm -f $(OVERLAY_PP) $(OVERLAY_OUT)
 
 install:
 	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(CURDIR) modules_install
+
+dtbo: $(OVERLAY_OUT)
+
+$(OVERLAY_OUT): $(OVERLAY_SRC)
+	cpp -nostdinc -I $(KDIR)/include -undef -x assembler-with-cpp $< $(OVERLAY_PP)
+	dtc -@ -I dts -O dtb -o $@ $(OVERLAY_PP)
+	rm -f $(OVERLAY_PP)
+
+install-dtbo: $(OVERLAY_OUT)
+	install -D -m 644 $(OVERLAY_OUT) /boot/overlay-user/rk3566-rknpu.dtbo

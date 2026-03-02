@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * DT overlay for RK3566 NPU support (non-IOMMU mode).
+ *
+ * Adds the RKNPU device node, power domain, OPP table, and IOMMU
+ * node (disabled) to any RK3566 board whose base DTB includes
+ * __symbols__.
+ *
+ * Compile:
+ *   cpp -nostdinc -I ${KDIR}/include -undef -x assembler-with-cpp \
+ *       rk3566-rknpu-overlay.dts rk3566-rknpu-overlay.dts.preprocessed
+ *   dtc -@ -I dts -O dtb -o rk3566-rknpu.dtbo \
+ *       rk3566-rknpu-overlay.dts.preprocessed
+ *
+ * Deploy (DietPi / Armbian):
+ *   cp rk3566-rknpu.dtbo /boot/overlay-user/
+ *   # Add to /boot/dietpiEnv.txt:  user_overlays=rk3566-rknpu
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/clock/rk3568-cru.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/power/rk3568-power.h>
+
+/* 1. NPU power domain ------------------------------------------------- */
+
+&power {
+	pd_npu: power-domain@6 {
+		reg = <RK3568_PD_NPU>;
+		clocks = <&cru ACLK_NPU_PRE>,
+			 <&cru HCLK_NPU_PRE>,
+			 <&cru PCLK_NPU_PRE>;
+		pm_qos = <&qos_npu>;
+		#power-domain-cells = <0>;
+	};
+};
+
+/* 2. NPU device, IOMMU, and OPP table (root-level nodes) ------------- */
+
+&{/} {
+	npu_opp_table: npu-opp-table {
+		compatible = "operating-points-v2";
+
+		opp-200000000 {
+			opp-hz = /bits/ 64 <200000000>;
+			opp-microvolt = <850000 850000 1000000>;
+		};
+		opp-297000000 {
+			opp-hz = /bits/ 64 <297000000>;
+			opp-microvolt = <850000 850000 1000000>;
+		};
+		opp-400000000 {
+			opp-hz = /bits/ 64 <400000000>;
+			opp-microvolt = <850000 850000 1000000>;
+		};
+		opp-600000000 {
+			opp-hz = /bits/ 64 <600000000>;
+			opp-microvolt = <850000 850000 1000000>;
+		};
+		opp-700000000 {
+			opp-hz = /bits/ 64 <700000000>;
+			opp-microvolt = <875000 875000 1000000>;
+		};
+		opp-800000000 {
+			opp-hz = /bits/ 64 <800000000>;
+			opp-microvolt = <925000 925000 1000000>;
+		};
+	};
+
+	npu@fde40000 {
+		compatible = "rockchip,rk3568-rknpu", "rockchip,rknpu";
+		reg = <0x00 0xfde40000 0x00 0x10000>;
+		interrupts = <GIC_SPI 151 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "npu_irq";
+		clocks = <&scmi_clk SCMI_CLK_NPU>,
+			 <&cru CLK_NPU>,
+			 <&cru ACLK_NPU>,
+			 <&cru HCLK_NPU>;
+		clock-names = "scmi_clk", "clk", "aclk", "hclk";
+		assigned-clocks = <&cru CLK_NPU>;
+		assigned-clock-rates = <600000000>;
+		resets = <&cru SRST_A_NPU>, <&cru SRST_H_NPU>;
+		reset-names = "srst_a", "srst_h";
+		power-domains = <&power RK3568_PD_NPU>;
+		operating-points-v2 = <&npu_opp_table>;
+		rknpu-supply = <&vdd_npu>;
+		status = "okay";
+	};
+
+	/*
+	 * IOMMU for NPU — disabled for now
+	 */
+	iommu@fde4b000 {
+		compatible = "rockchip,rk3568-iommu";
+		reg = <0x00 0xfde4b000 0x00 0x40>;
+		interrupts = <GIC_SPI 151 IRQ_TYPE_LEVEL_HIGH>;
+		interrupt-names = "rknpu_mmu";
+		clocks = <&cru ACLK_NPU>, <&cru HCLK_NPU>;
+		clock-names = "aclk", "iface";
+		power-domains = <&power RK3568_PD_NPU>;
+		#iommu-cells = <0>;
+		status = "disabled";
+	};
+};
+
+/* 3. Keep vdd_npu regulator always on --------------------------------- */
+/*
+ * Without this, the regulator framework may disable DCDC_REG4
+ * (vdd_npu) after boot because no consumer claims it early
+ * enough, causing NPU power domain enable to fail with -ETIMEDOUT.
+ */
+
+&vdd_npu {
+	regulator-always-on;
+};
