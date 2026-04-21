@@ -774,6 +774,7 @@ static int rknpu_submit(struct rknpu_device *rknpu_dev,
 		if (!in_fence) {
 			LOG_ERROR("invalid fence in fd, fd: %d\n",
 				  args->fence_fd);
+			rknpu_job_free(job);
 			return -EINVAL;
 		}
 		args->fence_fd = -1;
@@ -793,6 +794,7 @@ static int rknpu_submit(struct rknpu_device *rknpu_dev,
 				LOG_ERROR("Error (%d) waiting for fence!\n",
 					  ret);
 
+			rknpu_job_free(job);
 			return ret;
 		}
 #else
