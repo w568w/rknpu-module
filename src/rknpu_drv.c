@@ -338,6 +338,7 @@ static const struct of_device_id rknpu_of_match[] = {
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, rknpu_of_match);
 
 static int rknpu_get_drv_version(uint32_t *version)
 {
