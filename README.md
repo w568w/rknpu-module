@@ -2,7 +2,7 @@
 
 Out-of-tree kernel module for the Rockchip RKNPU driver, ported from the [rockchip-linux/kernel](https://github.com/rockchip-linux/kernel).
 
-Tested on Armbian mainline kernel 6.19.x.
+Tested on Armbian mainline kernel 6.19.x and 7.0.0.
 
 ![An inference example](assets/inference.png)
 
@@ -12,7 +12,7 @@ Tested on Armbian mainline kernel 6.19.x.
 |---|---|
 | Board | OrangePi 3B v1.1 (RK3566) |
 | OS | DietPi OS (Debian Trixie) |
-| Kernel | 6.19.3-edge-rockchip64 |
+| Kernel | 6.19.3-edge-rockchip64, 7.0.0-rc7-edge-rockchip64 |
 | RKNN Runtime | librknnrt v2.3.2 |
 
 ## 2. Prerequisites
