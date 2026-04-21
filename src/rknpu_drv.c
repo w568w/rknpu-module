@@ -1703,10 +1703,19 @@ static void rknpu_remove(struct platform_device *pdev)
 static int rknpu_suspend(struct device *dev)
 {
 	struct rknpu_device *rknpu_dev = dev_get_drvdata(dev);
+	int ret;
 
-	rknpu_power_get(rknpu_dev);
+	ret = rknpu_power_get(rknpu_dev);
+	if (ret)
+		return ret;
 
-	return pm_runtime_force_suspend(dev);
+	ret = pm_runtime_force_suspend(dev);
+	if (ret) {
+		rknpu_power_put(rknpu_dev);
+		return ret;
+	}
+
+	return 0;
 }
 
 static int rknpu_resume(struct device *dev)
