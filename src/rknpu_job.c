@@ -104,9 +104,10 @@ static void rknpu_job_free(struct rknpu_job *job)
 	if (job->fence)
 		dma_fence_put(job->fence);
 
-	if (job->args_owner)
-		kfree(job->args);
-
+	/*
+	 * When args_owner is true, job->args points into the tail of the same
+	 * allocation as job (see rknpu_job_alloc). Freeing job also frees args.
+	 */
 	kfree(job);
 }
 
@@ -130,11 +131,20 @@ static inline struct rknpu_job *rknpu_job_alloc(struct rknpu_device *rknpu_dev,
 {
 	struct rknpu_job *job = NULL;
 	int i = 0;
+	bool need_copy = !!(args->flags & RKNPU_JOB_NONBLOCK);
 #ifdef CONFIG_ROCKCHIP_RKNPU_DRM_GEM
 	struct rknpu_gem_object *task_obj = NULL;
 #endif
 
-	job = kzalloc(sizeof(*job), GFP_KERNEL);
+	/*
+	 * For NONBLOCK jobs we need a private copy of args that outlives the
+	 * caller's stack frame. Fold both allocations into one to save an
+	 * kmalloc/kfree pair per async submit.
+	 */
+	if (need_copy)
+		job = kzalloc(sizeof(*job) + sizeof(*args), GFP_KERNEL);
+	else
+		job = kzalloc(sizeof(*job), GFP_KERNEL);
 	if (!job)
 		return NULL;
 
@@ -154,17 +164,14 @@ static inline struct rknpu_job *rknpu_job_alloc(struct rknpu_device *rknpu_dev,
 		rknpu_gem_object_get(&task_obj->base);
 #endif
 
-	if (!(args->flags & RKNPU_JOB_NONBLOCK)) {
+	if (!need_copy) {
 		job->args = args;
 		job->args_owner = false;
 		return job;
 	}
 
-	job->args = kzalloc(sizeof(*args), GFP_KERNEL);
-	if (!job->args) {
-		kfree(job);
-		return NULL;
-	}
+	/* args lives in the tail of the job allocation */
+	job->args = (struct rknpu_submit *)(job + 1);
 	*job->args = *args;
 	job->args_owner = true;
 
