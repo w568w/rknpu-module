@@ -630,6 +630,7 @@ static int rknpu_gem_alloc_buf_with_cache(struct rknpu_gem_object *rknpu_obj,
 	return 0;
 
 sgl_unmap:
+	if (rknpu_obj->size - length > 0)
 	iommu_unmap(domain, rknpu_obj->iova_start + cache_size,
 		    rknpu_obj->size - length);
 	sg_free_table(rknpu_obj->sgt);
