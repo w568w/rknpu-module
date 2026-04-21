@@ -1399,7 +1399,8 @@ static int rknpu_probe(struct platform_device *pdev)
 	if (rknpu_dev->num_clks < 1) {
 		LOG_DEV_ERROR(dev, "failed to get clk source for rknpu\n");
 #ifndef FPGA_PLATFORM
-		return -ENODEV;
+		ret = -ENODEV;
+		goto err_release_iommu;
 #endif
 	}
 
@@ -1412,7 +1413,7 @@ static int rknpu_probe(struct platform_device *pdev)
 				dev,
 				"failed to get vdd regulator for rknpu: %d\n",
 				ret);
-			return ret;
+			goto err_release_iommu;
 		}
 		rknpu_dev->vdd = NULL;
 	}
@@ -1425,7 +1426,7 @@ static int rknpu_probe(struct platform_device *pdev)
 				dev,
 				"failed to get mem regulator for rknpu: %d\n",
 				ret);
-			return ret;
+			goto err_release_iommu;
 		}
 		rknpu_dev->mem = NULL;
 	}
@@ -1446,7 +1447,8 @@ static int rknpu_probe(struct platform_device *pdev)
 			LOG_DEV_ERROR(
 				dev,
 				"failed to get memory resource for rknpu\n");
-			return -ENXIO;
+			ret = -ENXIO;
+			goto err_release_iommu;
 		}
 
 		rknpu_dev->base[i] = devm_ioremap_resource(dev, res);
@@ -1458,7 +1460,8 @@ static int rknpu_probe(struct platform_device *pdev)
 		if (IS_ERR(rknpu_dev->base[i])) {
 			LOG_DEV_ERROR(dev,
 				      "failed to remap register for rknpu\n");
-			return PTR_ERR(rknpu_dev->base[i]);
+			ret = PTR_ERR(rknpu_dev->base[i]);
+			goto err_release_iommu;
 		}
 	}
 
@@ -1477,7 +1480,7 @@ static int rknpu_probe(struct platform_device *pdev)
 	if (!rknpu_dev->bypass_irq_handler) {
 		ret = rknpu_register_irq(pdev, rknpu_dev);
 		if (ret)
-			return ret;
+			goto err_release_iommu;
 	} else {
 		LOG_DEV_WARN(dev, "bypass irq handler!\n");
 	}
@@ -1486,7 +1489,7 @@ static int rknpu_probe(struct platform_device *pdev)
 	ret = rknpu_drm_probe(rknpu_dev);
 	if (ret) {
 		LOG_DEV_ERROR(dev, "failed to probe device for rknpu\n");
-		return ret;
+		goto err_release_iommu;
 	}
 #endif
 #ifdef CONFIG_ROCKCHIP_RKNPU_DMA_HEAP
@@ -1497,14 +1500,14 @@ static int rknpu_probe(struct platform_device *pdev)
 	ret = misc_register(&rknpu_dev->miscdev);
 	if (ret) {
 		LOG_DEV_ERROR(dev, "cannot register miscdev (%d)\n", ret);
-		return ret;
+		goto err_remove_drv;
 	}
 
 	rknpu_dev->heap = rk_dma_heap_find("rk-dma-heap-cma");
 	if (!rknpu_dev->heap) {
 		LOG_DEV_ERROR(dev, "failed to find cma heap\n");
-		misc_deregister(&rknpu_dev->miscdev);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_remove_drv;
 	}
 	rk_dma_heap_set_dev(dev);
 	LOG_DEV_INFO(dev, "Initialized %s: v%d.%d.%d for %s\n", DRIVER_DESC,
@@ -1543,7 +1546,7 @@ static int rknpu_probe(struct platform_device *pdev)
 
 	ret = rknpu_power_on(rknpu_dev);
 	if (ret)
-		goto err_remove_drv;
+		goto err_detach_pm;
 
 #ifndef FPGA_PLATFORM
 	rknpu_devfreq_init(rknpu_dev);
@@ -1594,12 +1597,25 @@ static int rknpu_probe(struct platform_device *pdev)
 	return 0;
 
 err_remove_wq:
+	cancel_delayed_work_sync(&rknpu_dev->power_off_work);
 	destroy_workqueue(rknpu_dev->power_off_wq);
 
 err_devfreq_remove:
 #ifndef FPGA_PLATFORM
 	rknpu_devfreq_remove(rknpu_dev);
 #endif
+	rknpu_power_off(rknpu_dev);
+
+err_detach_pm:
+	if (rknpu_dev->multiple_domains) {
+		if (rknpu_dev->genpd_dev_npu2)
+			dev_pm_domain_detach(rknpu_dev->genpd_dev_npu2, true);
+		if (rknpu_dev->genpd_dev_npu1)
+			dev_pm_domain_detach(rknpu_dev->genpd_dev_npu1, true);
+		if (rknpu_dev->genpd_dev_npu0)
+			dev_pm_domain_detach(rknpu_dev->genpd_dev_npu0, true);
+	}
+	pm_runtime_disable(dev);
 
 err_remove_drv:
 #ifdef CONFIG_ROCKCHIP_RKNPU_DRM_GEM
@@ -1608,6 +1624,14 @@ err_remove_drv:
 #ifdef CONFIG_ROCKCHIP_RKNPU_DMA_HEAP
 	misc_deregister(&(rknpu_dev->miscdev));
 #endif
+
+err_release_iommu:
+	if (rknpu_dev->iommu_en) {
+		if (rknpu_dev->iommu_group)
+			iommu_group_put(rknpu_dev->iommu_group);
+	} else {
+		of_reserved_mem_device_release(dev);
+	}
 
 	return ret;
 }
