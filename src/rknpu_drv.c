@@ -946,6 +946,9 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 {
 	struct device *dev = rknpu_dev->dev;
 	int ret = -EINVAL;
+	bool vdd_enabled = false, mem_enabled = false, clk_enabled = false;
+	bool devfreq_locked = false;
+	bool got_npu0 = false, got_npu1 = false, got_npu2 = false;
 
 #ifndef FPGA_PLATFORM
 	if (rknpu_dev->vdd) {
@@ -955,8 +958,9 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 				dev,
 				"failed to enable vdd reg for rknpu, ret: %d\n",
 				ret);
-			return ret;
+			goto err;
 		}
+		vdd_enabled = true;
 	}
 
 	if (rknpu_dev->mem) {
@@ -966,8 +970,9 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 				dev,
 				"failed to enable mem reg for rknpu, ret: %d\n",
 				ret);
-			return ret;
+			goto err;
 		}
+		mem_enabled = true;
 	}
 #endif
 
@@ -975,11 +980,13 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 	if (ret) {
 		LOG_DEV_ERROR(dev, "failed to enable clk for rknpu, ret: %d\n",
 			      ret);
-		return ret;
+		goto err;
 	}
+	clk_enabled = true;
 
 #ifndef FPGA_PLATFORM
 	rknpu_devfreq_lock(rknpu_dev);
+	devfreq_locked = true;
 #endif
 
 	if (rknpu_dev->multiple_domains) {
@@ -989,14 +996,18 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 				rknpu_dev->genpd_dev_npu0);
 #else
 			ret = pm_runtime_get_sync(rknpu_dev->genpd_dev_npu0);
+			if (ret < 0)
+				pm_runtime_put_noidle(
+					rknpu_dev->genpd_dev_npu0);
 #endif
 			if (ret < 0) {
 				LOG_DEV_ERROR(
 					dev,
 					"failed to get pm runtime for npu0, ret: %d\n",
 					ret);
-				goto out;
+				goto err;
 			}
+			got_npu0 = true;
 		}
 		if (rknpu_dev->genpd_dev_npu1) {
 #if KERNEL_VERSION(5, 5, 0) < LINUX_VERSION_CODE
@@ -1004,14 +1015,18 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 				rknpu_dev->genpd_dev_npu1);
 #else
 			ret = pm_runtime_get_sync(rknpu_dev->genpd_dev_npu1);
+			if (ret < 0)
+				pm_runtime_put_noidle(
+					rknpu_dev->genpd_dev_npu1);
 #endif
 			if (ret < 0) {
 				LOG_DEV_ERROR(
 					dev,
 					"failed to get pm runtime for npu1, ret: %d\n",
 					ret);
-				goto out;
+				goto err;
 			}
+			got_npu1 = true;
 		}
 		if (rknpu_dev->genpd_dev_npu2) {
 #if KERNEL_VERSION(5, 5, 0) < LINUX_VERSION_CODE
@@ -1019,31 +1034,59 @@ static int rknpu_power_on(struct rknpu_device *rknpu_dev)
 				rknpu_dev->genpd_dev_npu2);
 #else
 			ret = pm_runtime_get_sync(rknpu_dev->genpd_dev_npu2);
+			if (ret < 0)
+				pm_runtime_put_noidle(
+					rknpu_dev->genpd_dev_npu2);
 #endif
 			if (ret < 0) {
 				LOG_DEV_ERROR(
 					dev,
 					"failed to get pm runtime for npu2, ret: %d\n",
 					ret);
-				goto out;
+				goto err;
 			}
+			got_npu2 = true;
 		}
 	}
+
 	ret = pm_runtime_get_sync(dev);
 	if (ret < 0) {
 		LOG_DEV_ERROR(dev,
 			      "failed to get pm runtime for rknpu, ret: %d\n",
 			      ret);
+		pm_runtime_put_noidle(dev);
+		goto err;
 	}
 
 	if (rknpu_dev->config->state_init != NULL)
 		rknpu_dev->config->state_init(rknpu_dev);
 
-out:
 #ifndef FPGA_PLATFORM
 	rknpu_devfreq_unlock(rknpu_dev);
 #endif
 
+	return 0;
+
+err:
+	if (got_npu2)
+		pm_runtime_put_sync(rknpu_dev->genpd_dev_npu2);
+	if (got_npu1)
+		pm_runtime_put_sync(rknpu_dev->genpd_dev_npu1);
+	if (got_npu0)
+		pm_runtime_put_sync(rknpu_dev->genpd_dev_npu0);
+#ifndef FPGA_PLATFORM
+	if (devfreq_locked)
+		rknpu_devfreq_unlock(rknpu_dev);
+#endif
+	if (clk_enabled)
+		clk_bulk_disable_unprepare(rknpu_dev->num_clks,
+					   rknpu_dev->clks);
+#ifndef FPGA_PLATFORM
+	if (mem_enabled)
+		regulator_disable(rknpu_dev->mem);
+	if (vdd_enabled)
+		regulator_disable(rknpu_dev->vdd);
+#endif
 	return ret;
 }
 
