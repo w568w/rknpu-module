@@ -702,44 +702,69 @@ static void rknpu_job_timeout_clean(struct rknpu_device *rknpu_dev,
 	struct rknpu_job *job = NULL;
 	unsigned long flags;
 	struct rknpu_subcore_data *subcore_data = NULL;
-	int i = 0;
+	int num_irqs = rknpu_dev->config->num_irqs;
+	int i = 0, j = 0;
 
-	for (i = 0; i < rknpu_dev->config->num_irqs; i++) {
-		if (core_mask & rknpu_core_mask(i)) {
-			subcore_data = &rknpu_dev->subcore_datas[i];
-			job = subcore_data->job;
-			if (job &&
-			    ktime_us_delta(ktime_get(), job->timestamp) >=
-				    job->args->timeout) {
-				rknpu_soft_reset(rknpu_dev);
+	for (i = 0; i < num_irqs; i++) {
+		if (!(core_mask & rknpu_core_mask(i)))
+			continue;
 
-				spin_lock_irqsave(&rknpu_dev->irq_lock, flags);
-				subcore_data->job = NULL;
-				spin_unlock_irqrestore(&rknpu_dev->irq_lock,
-						       flags);
+		subcore_data = &rknpu_dev->subcore_datas[i];
+		job = subcore_data->job;
+		if (!job ||
+		    ktime_us_delta(ktime_get(), job->timestamp) <
+			    job->args->timeout)
+			continue;
 
-				do {
-					schedule_work(&job->cleanup_work);
+		rknpu_soft_reset(rknpu_dev);
 
-					spin_lock_irqsave(&rknpu_dev->irq_lock,
-							  flags);
+		/*
+		 * A multi-core job may be referenced by multiple cores'
+		 * subcore_data->job slot and/or still linked on their
+		 * todo_list via job->head[j]. Clear / unlink from ALL
+		 * cores under irq_lock before scheduling the cleanup
+		 * work, otherwise a later rknpu_job_next() or IRQ on a
+		 * peer core could dereference freed memory (UAF).
+		 */
+		spin_lock_irqsave(&rknpu_dev->irq_lock, flags);
+		for (j = 0; j < num_irqs; j++) {
+			struct rknpu_subcore_data *sd =
+				&rknpu_dev->subcore_datas[j];
 
-					if (!list_empty(
-						    &subcore_data->todo_list)) {
-						job = list_first_entry(
-							&subcore_data->todo_list,
-							struct rknpu_job,
-							head[i]);
-						list_del_init(&job->head[i]);
-					} else {
-						job = NULL;
-					}
-
-					spin_unlock_irqrestore(
-						&rknpu_dev->irq_lock, flags);
-				} while (job);
-			}
+			if (sd->job == job)
+				sd->job = NULL;
+			if (!list_empty(&job->head[j]))
+				list_del_init(&job->head[j]);
 		}
+		spin_unlock_irqrestore(&rknpu_dev->irq_lock, flags);
+
+		schedule_work(&job->cleanup_work);
+
+		/* Drain remaining queued jobs on this core's todo_list. */
+		do {
+			spin_lock_irqsave(&rknpu_dev->irq_lock, flags);
+
+			if (!list_empty(&subcore_data->todo_list)) {
+				job = list_first_entry(
+					&subcore_data->todo_list,
+					struct rknpu_job, head[i]);
+				/*
+				 * Same care for queued multi-core jobs:
+				 * unlink from every core's todo_list.
+				 */
+				for (j = 0; j < num_irqs; j++) {
+					if (!list_empty(&job->head[j]))
+						list_del_init(&job->head[j]);
+				}
+			} else {
+				job = NULL;
+			}
+
+			spin_unlock_irqrestore(&rknpu_dev->irq_lock, flags);
+
+			if (job)
+				schedule_work(&job->cleanup_work);
+		} while (job);
 	}
 }
 
