@@ -64,15 +64,16 @@ static int rknpu_gem_get_pages(struct rknpu_gem_object *rknpu_obj)
 	}
 
 	ret = rknpu_iommu_dma_map_sg(drm->dev, rknpu_obj->sgt->sgl,
-				     rknpu_obj->sgt->nents, DMA_BIDIRECTIONAL,
-				     iova_aligned);
+				     rknpu_obj->sgt->orig_nents,
+				     DMA_BIDIRECTIONAL, iova_aligned);
 	if (ret == 0) {
 		ret = -EFAULT;
 		LOG_DEV_ERROR(drm->dev, "%s: dma map %zu fail\n", __func__,
 			      rknpu_obj->size);
 		goto free_sgt;
 	}
-	iommu_flush_iotlb_all(iommu_get_domain_for_dev(drm->dev));
+	/* dma_map_sg may coalesce segments; record the DMA-mapped count. */
+	rknpu_obj->sgt->nents = ret;
 
 	if (rknpu_obj->flags & RKNPU_MEM_KERNEL_MAPPING) {
 		rknpu_obj->cookie = vmap(rknpu_obj->pages, rknpu_obj->num_pages,
@@ -100,8 +101,8 @@ static int rknpu_gem_get_pages(struct rknpu_gem_object *rknpu_obj)
 
 unmap_sg:
 	rknpu_iommu_dma_unmap_sg(drm->dev, rknpu_obj->sgt->sgl,
-				 rknpu_obj->sgt->nents, DMA_BIDIRECTIONAL,
-				 iova_aligned);
+				 rknpu_obj->sgt->orig_nents,
+				 DMA_BIDIRECTIONAL, iova_aligned);
 
 free_sgt:
 	sg_free_table(rknpu_obj->sgt);
@@ -126,7 +127,7 @@ static void rknpu_gem_put_pages(struct rknpu_gem_object *rknpu_obj)
 
 	if (rknpu_obj->sgt != NULL) {
 		rknpu_iommu_dma_unmap_sg(drm->dev, rknpu_obj->sgt->sgl,
-					 rknpu_obj->sgt->nents,
+					 rknpu_obj->sgt->orig_nents,
 					 DMA_BIDIRECTIONAL, iova_aligned);
 		sg_free_table(rknpu_obj->sgt);
 		kfree(rknpu_obj->sgt);
