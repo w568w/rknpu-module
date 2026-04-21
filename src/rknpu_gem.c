@@ -632,8 +632,8 @@ static int rknpu_gem_alloc_buf_with_cache(struct rknpu_gem_object *rknpu_obj,
 
 sgl_unmap:
 	if (rknpu_obj->size - length > 0)
-	iommu_unmap(domain, rknpu_obj->iova_start + cache_size,
-		    rknpu_obj->size - length);
+		iommu_unmap(domain, rknpu_obj->iova_start + cache_size,
+			    rknpu_obj->size - length);
 	sg_free_table(rknpu_obj->sgt);
 	kfree(rknpu_obj->sgt);
 
@@ -675,6 +675,13 @@ static void rknpu_gem_free_buf_with_cache(struct rknpu_gem_object *rknpu_obj,
 
 	domain = iommu_get_domain_for_dev(rknpu_dev->dev);
 	if (domain) {
+		/*
+		 * Unmap mirrors the allocation layout:
+		 *   [iova_start,            cache_size)       cache region
+		 *   [iova_start + cache_size, size)          DDR region
+		 * iommu_unmap() accepts a single call spanning multiple
+		 * underlying page-size mappings and walks the PTEs itself.
+		 */
 		iommu_unmap(domain, rknpu_obj->iova_start, cache_size);
 		if (rknpu_obj->size > 0)
 			iommu_unmap(domain, rknpu_obj->iova_start + cache_size,
