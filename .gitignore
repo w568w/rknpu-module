@@ -12,6 +12,7 @@ Module.symvers
 
 # Kernel headers (synced from SBC, too large for git)
 kernel-headers/
+kernel-headers*/
 
 # Compiled DTB binaries (keep .dts source only)
 dts/*.dtb

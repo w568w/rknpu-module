@@ -862,7 +862,7 @@ static int drm_fake_dev_register(struct rknpu_device *rknpu_dev)
 
 	pdev = platform_device_register_full(&rknpu_dev_info);
 	if (pdev) {
-		ret = of_dma_configure(&pdev->dev, NULL, true);
+		ret = of_dma_configure_id(&pdev->dev, NULL, true, NULL);
 		if (ret) {
 			platform_device_unregister(pdev);
 			pdev = NULL;
