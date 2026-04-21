@@ -1106,7 +1106,15 @@ static int rknpu_gem_mmap_cache(struct rknpu_gem_object *rknpu_obj,
 		return -EINVAL;
 	}
 
-	vm_flags_set(vma, VM_MIXEDMAP);
+	/*
+	 * Do NOT set VM_MIXEDMAP here. The cache region below is mapped
+	 * with remap_pfn_range(), which implicitly sets VM_PFNMAP on this
+	 * VMA. Mixing VM_MIXEDMAP with VM_PFNMAP on the same VMA triggers
+	 * VM_BUG_ON in modern kernels. For the DDR pages we therefore
+	 * use vmf_insert_pfn() / remap_pfn_range() instead of
+	 * vm_insert_page(), because vm_insert_page() requires VM_MIXEDMAP.
+	 */
+	/* vm_flags_set(vma, VM_MIXEDMAP); */
 
 	vm_size = vma->vm_end - vma->vm_start;
 
@@ -1135,10 +1143,17 @@ static int rknpu_gem_mmap_cache(struct rknpu_gem_object *rknpu_obj,
 
 	offset = cache_size;
 
+	/*
+	 * Map the DDR pages with remap_pfn_range() one page at a time so we
+	 * stay within the VM_PFNMAP model set up above (vm_insert_page()
+	 * would require VM_MIXEDMAP, which conflicts).
+	 */
 	num_pages = (vm_size - cache_size) / PAGE_SIZE;
 	for (i = 0; i < num_pages; ++i) {
-		ret = vm_insert_page(vma, vma->vm_start + offset,
-				     rknpu_obj->pages[i]);
+		unsigned long pfn = page_to_pfn(rknpu_obj->pages[i]);
+
+		ret = remap_pfn_range(vma, vma->vm_start + offset, pfn,
+				      PAGE_SIZE, vma->vm_page_prot);
 		if (ret < 0)
 			return ret;
 		offset += PAGE_SIZE;
