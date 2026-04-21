@@ -258,10 +258,11 @@ static int rknpu_gem_alloc_buf(struct rknpu_gem_object *rknpu_obj)
 		goto err_free_sgt;
 	}
 
-	for_each_sg(sgt->sgl, s, sgt->nents, i) {
-		sg_dma_address(s) = sg_phys(s);
-		LOG_DEBUG("dma alloc sgt[%d], phys_address: %pad, length: %u\n",
-			  i, &s->dma_address, s->length);
+	for_each_sg(sgt->sgl, s, sgt->orig_nents, i) {
+		phys_addr_t phys = sg_phys(s);
+
+		LOG_DEBUG("dma alloc sgt[%d], phys_address: %pa, length: %u\n",
+			  i, &phys, s->length);
 	}
 
 #if KERNEL_VERSION(6, 1, 0) > LINUX_VERSION_CODE
