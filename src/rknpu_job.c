@@ -884,28 +884,10 @@ int rknpu_submit_ioctl(struct drm_device *dev, void *data,
 #endif
 
 #ifdef CONFIG_ROCKCHIP_RKNPU_DMA_HEAP
-int rknpu_submit_ioctl(struct rknpu_device *rknpu_dev, unsigned long data)
+int rknpu_submit_ioctl(struct rknpu_device *rknpu_dev,
+		       struct rknpu_submit *args)
 {
-	struct rknpu_submit args;
-	int ret = -EINVAL;
-
-	if (unlikely(copy_from_user(&args, (struct rknpu_submit *)data,
-				    sizeof(struct rknpu_submit)))) {
-		LOG_ERROR("%s: copy_from_user failed\n", __func__);
-		ret = -EFAULT;
-		return ret;
-	}
-
-	ret = rknpu_submit(rknpu_dev, &args);
-
-	if (unlikely(copy_to_user((struct rknpu_submit *)data, &args,
-				  sizeof(struct rknpu_submit)))) {
-		LOG_ERROR("%s: copy_to_user failed\n", __func__);
-		ret = -EFAULT;
-		return ret;
-	}
-
-	return ret;
+	return rknpu_submit(rknpu_dev, args);
 }
 #endif
 

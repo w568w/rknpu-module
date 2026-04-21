@@ -594,39 +594,45 @@ static int rknpu_release(struct inode *inode, struct file *file)
 }
 
 static int rknpu_action_ioctl(struct rknpu_device *rknpu_dev,
-			      unsigned long data)
+			      struct rknpu_action *args)
 {
-	struct rknpu_action args;
-	int ret = -EINVAL;
-
-	if (unlikely(copy_from_user(&args, (struct rknpu_action *)data,
-				    sizeof(struct rknpu_action)))) {
-		LOG_ERROR("%s: copy_from_user failed\n", __func__);
-		ret = -EFAULT;
-		return ret;
-	}
-
-	ret = rknpu_action(rknpu_dev, &args);
-
-	if (unlikely(copy_to_user((struct rknpu_action *)data, &args,
-				  sizeof(struct rknpu_action)))) {
-		LOG_ERROR("%s: copy_to_user failed\n", __func__);
-		ret = -EFAULT;
-		return ret;
-	}
-
-	return ret;
+	return rknpu_action(rknpu_dev, args);
 }
 
 static long rknpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	long ret = -EINVAL;
 	struct rknpu_device *rknpu_dev = NULL;
+	void __user *uarg = (void __user *)arg;
+	/*
+	 * All current RKNPU ioctls fit into this union; using a single local
+	 * buffer avoids a dynamic allocation on every ioctl and lets us batch
+	 * copy_from_user / copy_to_user in one place instead of duplicating
+	 * them in each sub-handler.
+	 */
+	union {
+		struct rknpu_action action;
+		struct rknpu_submit submit;
+	} kdata;
+	unsigned int size = _IOC_SIZE(cmd);
+	unsigned int dir = _IOC_DIR(cmd);
 
 	if (!file->private_data)
 		return -EINVAL;
 
 	rknpu_dev = ((struct rknpu_session *)file->private_data)->rknpu_dev;
+
+	if (size > sizeof(kdata))
+		return -EINVAL;
+
+	if (dir & _IOC_WRITE) {
+		if (copy_from_user(&kdata, uarg, size)) {
+			LOG_ERROR("%s: copy_from_user failed\n", __func__);
+			return -EFAULT;
+		}
+	} else {
+		memset(&kdata, 0, size);
+	}
 
 	ret = rknpu_power_get(rknpu_dev);
 	if (ret)
@@ -634,10 +640,10 @@ static long rknpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	switch (_IOC_NR(cmd)) {
 	case RKNPU_ACTION:
-		ret = rknpu_action_ioctl(rknpu_dev, arg);
+		ret = rknpu_action_ioctl(rknpu_dev, &kdata.action);
 		break;
 	case RKNPU_SUBMIT:
-		ret = rknpu_submit_ioctl(rknpu_dev, arg);
+		ret = rknpu_submit_ioctl(rknpu_dev, &kdata.submit);
 		break;
 	case RKNPU_MEM_CREATE:
 		ret = rknpu_mem_create_ioctl(rknpu_dev, file, cmd, arg);
@@ -655,6 +661,18 @@ static long rknpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 
 	rknpu_power_put_delay(rknpu_dev);
+
+	/*
+	 * Only copy back when the ioctl succeeded and has an output direction.
+	 * This avoids an unnecessary user-space write on the error path and
+	 * for pure _IOW ioctls.
+	 */
+	if (ret == 0 && (dir & _IOC_READ)) {
+		if (copy_to_user(uarg, &kdata, size)) {
+			LOG_ERROR("%s: copy_to_user failed\n", __func__);
+			return -EFAULT;
+		}
+	}
 
 	return ret;
 }
