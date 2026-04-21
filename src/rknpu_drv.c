@@ -373,8 +373,11 @@ int rknpu_power_get(struct rknpu_device *rknpu_dev)
 	int ret = 0;
 
 	mutex_lock(&rknpu_dev->power_lock);
-	if (atomic_inc_return(&rknpu_dev->power_refcount) == 1)
+	if (atomic_inc_return(&rknpu_dev->power_refcount) == 1) {
 		ret = rknpu_power_on(rknpu_dev);
+		if (ret)
+			atomic_dec(&rknpu_dev->power_refcount);
+	}
 	mutex_unlock(&rknpu_dev->power_lock);
 
 	return ret;
@@ -625,7 +628,9 @@ static long rknpu_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	rknpu_dev = ((struct rknpu_session *)file->private_data)->rknpu_dev;
 
-	rknpu_power_get(rknpu_dev);
+	ret = rknpu_power_get(rknpu_dev);
+	if (ret)
+		return ret;
 
 	switch (_IOC_NR(cmd)) {
 	case RKNPU_ACTION:
@@ -687,7 +692,9 @@ static int rknpu_action_ioctl(struct drm_device *dev, void *data,
 	{                                                                   \
 		struct rknpu_device *rknpu_dev = dev_get_drvdata(dev->dev); \
 		int ret = -EINVAL;                                          \
-		rknpu_power_get(rknpu_dev);                                 \
+		ret = rknpu_power_get(rknpu_dev);                           \
+		if (ret)                                                    \
+			return ret;                                         \
 		ret = func(dev, data, file_priv);                           \
 		rknpu_power_put_delay(rknpu_dev);                           \
 		return ret;                                                 \
