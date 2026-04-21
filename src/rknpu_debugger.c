@@ -96,11 +96,13 @@ static ssize_t rknpu_power_set(struct file *file, const char __user *ubuf,
 		container_of(debugger, struct rknpu_device, debugger);
 	char buf[8];
 
-	if (len > sizeof(buf) - 1)
+	if (len == 0 || len >= sizeof(buf))
 		return -EINVAL;
 	if (copy_from_user(buf, ubuf, len))
 		return -EFAULT;
-	buf[len - 1] = '\0';
+	buf[len] = '\0';
+	if (buf[len - 1] == '\n')
+		buf[len - 1] = '\0';
 
 	if (strcmp(buf, "on") == 0) {
 		atomic_inc(&rknpu_dev->cmdline_power_refcount);
@@ -150,11 +152,13 @@ static ssize_t rknpu_power_put_delay_set(struct file *file,
 	unsigned long power_put_delay = 0;
 	int ret = 0;
 
-	if (len > sizeof(buf) - 1)
+	if (len == 0 || len >= sizeof(buf))
 		return -EINVAL;
 	if (copy_from_user(buf, ubuf, len))
 		return -EFAULT;
-	buf[len - 1] = '\0';
+	buf[len] = '\0';
+	if (buf[len - 1] == '\n')
+		buf[len - 1] = '\0';
 
 	ret = kstrtoul(buf, 10, &power_put_delay);
 	if (ret) {
@@ -203,11 +207,13 @@ static ssize_t rknpu_freq_set(struct file *file, const char __user *ubuf,
 	unsigned long freq = 0;
 	int ret = 0;
 
-	if (len > sizeof(buf) - 1)
+	if (len == 0 || len >= sizeof(buf))
 		return -EINVAL;
 	if (copy_from_user(buf, ubuf, len))
 		return -EFAULT;
-	buf[len - 1] = '\0';
+	buf[len] = '\0';
+	if (buf[len - 1] == '\n')
+		buf[len - 1] = '\0';
 
 	ret = kstrtoul(buf, 10, &freq);
 	if (ret) {
@@ -280,11 +286,13 @@ static ssize_t rknpu_reset_set(struct file *file, const char __user *ubuf,
 		container_of(debugger, struct rknpu_device, debugger);
 	char buf[8];
 
-	if (len > sizeof(buf) - 1)
+	if (len == 0 || len >= sizeof(buf))
 		return -EINVAL;
 	if (copy_from_user(buf, ubuf, len))
 		return -EFAULT;
-	buf[len - 1] = '\0';
+	buf[len] = '\0';
+	if (buf[len - 1] == '\n')
+		buf[len - 1] = '\0';
 
 	if (strcmp(buf, "1") == 0 &&
 	    atomic_read(&rknpu_dev->power_refcount) > 0)
