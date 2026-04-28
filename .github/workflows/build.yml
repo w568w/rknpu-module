@@ -14,8 +14,8 @@ on:
         options: [edge, current]
 
 jobs:
-  build-kernel:
-    name: Build Armbian kernel (${{ matrix.board }} / ${{ matrix.branch }})
+  build:
+    name: Cross-build (${{ matrix.board }} / ${{ matrix.branch }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -23,23 +23,46 @@ jobs:
         include:
           - board: orangepi3b
             branch: edge
-    permissions:
-      contents: write
+
     steps:
-      - name: Checkout rknpu-module (for userpatches/, if any)
+      - name: Free disk space
+        uses: descriptinc/free-disk-space@main
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout rknpu-module
         uses: actions/checkout@v4
         with:
           path: rknpu-module
 
-      - name: Build Armbian kernel packages
-        uses: armbian/build@main
+      - name: Checkout armbian/build framework
+        uses: actions/checkout@v4
         with:
-          armbian_token: ${{ secrets.GITHUB_TOKEN }}
-          armbian_target: kernel
-          armbian_board: ${{ matrix.board }}
-          armbian_kernel_branch: ${{ github.event.inputs.kernel_branch || matrix.branch }}
-          armbian_runner_clean: 'yes'
-          armbian_artifacts: build/output/debs/
+          repository: armbian/build
+          path: build
+          fetch-depth: 1
+
+      - name: Build kernel packages via Armbian framework
+        working-directory: build
+        env:
+          BRANCH: ${{ github.event.inputs.kernel_branch || matrix.branch }}
+          BOARD: ${{ matrix.board }}
+        run: |
+          # Install host dependencies via the framework's own helper.
+          sudo ./compile.sh requirements
+          sudo chown -R "$USER:$USER" .
+          # Produce only the kernel .deb's (no rootfs / image).
+          ./compile.sh kernel \
+            BOARD="$BOARD" \
+            BRANCH="$BRANCH" \
+            KERNEL_CONFIGURE=no \
+            EXPERT=yes \
+            SHARE_LOG=yes
 
       - name: Locate built linux-headers .deb
         id: hdr
@@ -68,27 +91,24 @@ jobs:
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             build-essential bc libelf-dev
 
-      - name: Rebuild host helpers (fixdep / modpost)
+      - name: Rebuild host helpers (fixdep / modpost / devicetable-offsets)
         env:
           KSRC: ${{ steps.ksrc.outputs.ksrc }}
         run: |
           set -euxo pipefail
-          # Armbian's headers .deb ships pre-built helpers compiled for the
-          # target arch (arm64). On an x86_64 runner we can't execute them,
-          # so rebuild them natively against the same source files.
+          # Armbian's headers .deb ships pre-built helpers compiled for arm64.
+          # On an x86_64 runner we can't execute them, so rebuild them
+          # natively against the same source files.
 
-          # 1. fixdep
           gcc -O2 -I"$KSRC/scripts/include" \
               -o "$KSRC/scripts/basic/fixdep" \
               "$KSRC/scripts/basic/fixdep.c"
 
-          # 2. mk_elfconfig + elfconfig.h
           MOD="$KSRC/scripts/mod"
           gcc -O2 -I"$KSRC/scripts/include" -o "$MOD/mk_elfconfig" "$MOD/mk_elfconfig.c"
           gcc -O2 -I"$KSRC/scripts/include" -c -o "$MOD/empty.o" "$MOD/empty.c"
           "$MOD/mk_elfconfig" < "$MOD/empty.o" > "$MOD/elfconfig.h"
 
-          # 3. devicetable-offsets.h via cross-cc -S then sed (see scripts/Makefile.lib)
           aarch64-linux-gnu-gcc -std=gnu11 -S \
             -I "$KSRC/include" \
             -I "$KSRC/arch/arm64/include" \
@@ -109,20 +129,18 @@ jobs:
             echo "#endif"
           } > "$MOD/devicetable-offsets.h"
 
-          # 4. modpost
           gcc -O2 -I"$MOD" -I"$KSRC/scripts/include" \
               -o "$MOD/modpost" \
               "$MOD/modpost.c" "$MOD/file2alias.c" "$MOD/sumversion.c" "$MOD/symsearch.c"
-
-          file "$KSRC/scripts/basic/fixdep" "$MOD/modpost"
 
       - name: Build rknpu.ko
         env:
           KSRC: ${{ steps.ksrc.outputs.ksrc }}
         working-directory: rknpu-module
         run: |
-          # CC_FLAGS_FTRACE='' avoids -mrecord-mcount when using gcc < 15.2.1
-          # on the runner (Ubuntu 24.04 still ships gcc-13 cross by default).
+          # CC_FLAGS_FTRACE='' avoids -mrecord-mcount which Ubuntu 24.04's
+          # gcc-13 cross compiler does not recognise. Drop once the runner
+          # ships gcc >= 15.2.1.
           make -j"$(nproc)" \
             KDIR="$KSRC" \
             ARCH=arm64 \
