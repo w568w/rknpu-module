@@ -44,7 +44,7 @@ jobs:
       - name: Locate built linux-headers .deb
         id: hdr
         run: |
-          DEB=$(find build/output/debs -maxdepth 2 -name 'linux-headers-${{ matrix.branch }}-*_arm64.deb' | head -n1)
+          DEB=$(find build/output/debs -maxdepth 2 -name 'linux-headers-*_arm64*.deb' | head -n1)
           test -n "$DEB" || { echo "headers .deb not found"; ls -R build/output/debs || true; exit 1; }
           echo "deb=$DEB" >> "$GITHUB_OUTPUT"
           echo "Found: $DEB"
