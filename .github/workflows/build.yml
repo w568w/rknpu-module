@@ -6,8 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      kernel_branch:
-        description: 'Armbian kernel branch'
+      kernel_flavor:
+        description: 'Armbian kernel flavor'
         required: true
         default: 'edge'
         type: choice
@@ -15,150 +15,46 @@ on:
 
 jobs:
   build:
-    name: Cross-build (${{ matrix.board }} / ${{ matrix.branch }})
-    runs-on: ubuntu-24.04
+    name: Build (${{ matrix.flavor }}-rockchip64)
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - board: orangepi3b
-            branch: edge
+        flavor: [edge]
 
     steps:
-      - name: Free disk space
-        uses: descriptinc/free-disk-space@main
-        with:
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
+      - uses: actions/checkout@v4
 
-      - name: Checkout rknpu-module
-        uses: actions/checkout@v4
-        with:
-          path: rknpu-module
-
-      - name: Checkout armbian/build framework
-        uses: actions/checkout@v4
-        with:
-          repository: armbian/build
-          path: build
-          fetch-depth: 1
-
-      - name: Build kernel packages via Armbian framework
-        working-directory: build
+      - name: Install Armbian kernel headers
         env:
-          BRANCH: ${{ github.event.inputs.kernel_branch || matrix.branch }}
-          BOARD: ${{ matrix.board }}
+          FLAVOR: ${{ github.event.inputs.kernel_flavor || matrix.flavor }}
         run: |
-          # Install host dependencies via the framework's own helper.
-          sudo ./compile.sh requirements
-          sudo chown -R "$USER:$USER" .
-          # Produce only the kernel .deb's (no rootfs / image).
-          ./compile.sh kernel \
-            BOARD="$BOARD" \
-            BRANCH="$BRANCH" \
-            KERNEL_CONFIGURE=no \
-            EXPERT=yes \
-            SHARE_LOG=yes
-
-      - name: Locate built linux-headers .deb
-        id: hdr
-        run: |
-          DEB=$(find build/output/debs -maxdepth 2 -name 'linux-headers-*_arm64*.deb' | head -n1)
-          test -n "$DEB" || { echo "headers .deb not found"; ls -R build/output/debs || true; exit 1; }
-          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
-          echo "Found: $DEB"
-
-      - name: Extract kernel headers tree
-        id: ksrc
-        run: |
-          mkdir -p hdr
-          dpkg-deb -x "${{ steps.hdr.outputs.deb }}" hdr
-          KSRC=$(find hdr/usr/src -maxdepth 1 -type d -name 'linux-headers-*' | head -n1)
-          test -n "$KSRC" || { echo "no kernel headers tree found"; exit 1; }
-          echo "ksrc=$(realpath "$KSRC")" >> "$GITHUB_OUTPUT"
-          KVER=$(basename "$KSRC" | sed 's/^linux-headers-//')
-          echo "kver=$KVER" >> "$GITHUB_OUTPUT"
-          echo "Kernel: $KVER  ($KSRC)"
-
-      - name: Install cross toolchain
-        run: |
+          set -euo pipefail
+          sudo install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://apt.armbian.com/armbian.key | \
+            sudo gpg --dearmor -o /etc/apt/keyrings/armbian.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/armbian.gpg] https://apt.armbian.com noble main ${FLAVOR}-utils" | \
+            sudo tee /etc/apt/sources.list.d/armbian.list
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            build-essential bc libelf-dev
-
-      - name: Rebuild host helpers (fixdep / modpost / devicetable-offsets)
-        env:
-          KSRC: ${{ steps.ksrc.outputs.ksrc }}
-        run: |
-          set -euxo pipefail
-          # Armbian's headers .deb ships pre-built helpers compiled for arm64.
-          # On an x86_64 runner we can't execute them, so rebuild them
-          # natively against the same source files.
-
-          gcc -O2 -I"$KSRC/scripts/include" \
-              -o "$KSRC/scripts/basic/fixdep" \
-              "$KSRC/scripts/basic/fixdep.c"
-
-          MOD="$KSRC/scripts/mod"
-          gcc -O2 -I"$KSRC/scripts/include" -o "$MOD/mk_elfconfig" "$MOD/mk_elfconfig.c"
-          gcc -O2 -I"$KSRC/scripts/include" -c -o "$MOD/empty.o" "$MOD/empty.c"
-          "$MOD/mk_elfconfig" < "$MOD/empty.o" > "$MOD/elfconfig.h"
-
-          aarch64-linux-gnu-gcc -std=gnu11 -S \
-            -I "$KSRC/include" \
-            -I "$KSRC/arch/arm64/include" \
-            -I "$KSRC/arch/arm64/include/generated" \
-            -I "$KSRC/include/uapi" \
-            -I "$KSRC/arch/arm64/include/uapi" \
-            -I "$KSRC/arch/arm64/include/generated/uapi" \
-            -I "$KSRC/include/generated/uapi" \
-            -include "$KSRC/include/linux/compiler-version.h" \
-            -include "$KSRC/include/linux/kconfig.h" \
-            -include "$KSRC/include/linux/compiler_types.h" \
-            -D__KERNEL__ \
-            -o "$MOD/devicetable-offsets.s" "$MOD/devicetable-offsets.c"
-          {
-            echo "#ifndef __DEVICETABLE_OFFSETS_H__"
-            echo "#define __DEVICETABLE_OFFSETS_H__"
-            sed -ne 's:^[[:space:]]*\.ascii[[:space:]]*"\(.*\)".*:\1:; /^->/{s:->#\(.*\):/* \1 */:; s:^->\([^ ]*\) [\$#]*\([^ ]*\) \(.*\):#define \1 \2 /* \3 */:; s:->::; p;}' "$MOD/devicetable-offsets.s"
-            echo "#endif"
-          } > "$MOD/devicetable-offsets.h"
-
-          gcc -O2 -I"$MOD" -I"$KSRC/scripts/include" \
-              -o "$MOD/modpost" \
-              "$MOD/modpost.c" "$MOD/file2alias.c" "$MOD/sumversion.c" "$MOD/symsearch.c"
+            "linux-headers-${FLAVOR}-rockchip64" build-essential bc
 
       - name: Build rknpu.ko
-        env:
-          KSRC: ${{ steps.ksrc.outputs.ksrc }}
-        working-directory: rknpu-module
         run: |
-          # CC_FLAGS_FTRACE='' avoids -mrecord-mcount which Ubuntu 24.04's
-          # gcc-13 cross compiler does not recognise. Drop once the runner
-          # ships gcc >= 15.2.1.
-          make -j"$(nproc)" \
-            KDIR="$KSRC" \
-            ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CC_FLAGS_FTRACE=
+          KVER=$(basename /usr/src/linux-headers-*-rockchip64 | sed 's/^linux-headers-//')
+          echo "KVER=$KVER" >> "$GITHUB_ENV"
+          make -j"$(nproc)" KDIR="/usr/src/linux-headers-${KVER}"
 
       - name: Show module info
-        working-directory: rknpu-module
         run: |
           file rknpu.ko
-          aarch64-linux-gnu-readelf -p .modinfo rknpu.ko | \
-            grep -E 'vermagic|name=|description=|license=' || true
+          modinfo rknpu.ko | grep -E '^(name|vermagic|description|license|depends):'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rknpu-${{ matrix.board }}-${{ steps.ksrc.outputs.kver }}
+          name: rknpu-${{ env.KVER }}
           path: |
-            rknpu-module/rknpu.ko
-            rknpu-module/Module.symvers
+            rknpu.ko
+            Module.symvers
           if-no-files-found: error
