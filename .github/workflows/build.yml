@@ -1,0 +1,101 @@
+name: Build rknpu.ko
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      armbian_branch:
+        description: 'Armbian kernel branch (current / edge)'
+        required: true
+        default: 'edge'
+        type: choice
+        options:
+          - edge
+          - current
+
+jobs:
+  build:
+    name: Cross-build (${{ matrix.board }} / ${{ matrix.branch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: orangepi3b
+            branch: edge
+
+    # Use the Armbian official build framework container; it bundles the
+    # cross toolchain, kernel build deps, and the full ./compile.sh tooling.
+    container:
+      image: ghcr.io/armbian/build:latest
+      options: --privileged
+
+    steps:
+      - name: Checkout rknpu-module
+        uses: actions/checkout@v4
+        with:
+          path: rknpu-module
+
+      - name: Checkout armbian/build framework
+        uses: actions/checkout@v4
+        with:
+          repository: armbian/build
+          path: build
+          fetch-depth: 1
+
+      - name: Build kernel via Armbian framework
+        working-directory: build
+        run: |
+          # Resolve user-dispatch override; fall back to matrix branch.
+          BRANCH="${{ github.event.inputs.armbian_branch || matrix.branch }}"
+          ./compile.sh kernel \
+            BOARD=${{ matrix.board }} \
+            BRANCH="${BRANCH}" \
+            KERNEL_CONFIGURE=no \
+            CLEAN_LEVEL="" \
+            EXPERT=yes
+
+      - name: Locate prepared kernel source tree
+        id: ksrc
+        working-directory: build
+        run: |
+          # Armbian leaves the configured + modules_prepare-ready kernel
+          # tree under cache/sources/linux-kernel-worktree/<family>-<branch>/
+          KSRC=$(find cache/sources/linux-kernel-worktree -maxdepth 2 -mindepth 2 -type d | head -n1)
+          if [ -z "$KSRC" ]; then
+            # older layouts: cache/sources/linux-mainline/<branch>
+            KSRC=$(find cache/sources -maxdepth 3 -type d -name 'linux-*' \
+                   -exec test -f '{}/Makefile' \; -print | head -n1)
+          fi
+          echo "Found kernel tree: $KSRC"
+          test -n "$KSRC" -a -f "$KSRC/Makefile"
+          echo "ksrc=$(realpath "$KSRC")" >> "$GITHUB_OUTPUT"
+          KVER=$(make -s -C "$KSRC" kernelrelease 2>/dev/null || echo unknown)
+          echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+          echo "Kernel release: $KVER"
+
+      - name: Build rknpu.ko
+        working-directory: rknpu-module
+        run: |
+          make -j"$(nproc)" \
+            KDIR="${{ steps.ksrc.outputs.ksrc }}" \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu-
+
+      - name: Verify module
+        working-directory: rknpu-module
+        run: |
+          file rknpu.ko
+          aarch64-linux-gnu-readelf -p .modinfo rknpu.ko | \
+            grep -E 'vermagic|name=|version=' || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rknpu-${{ matrix.board }}-${{ matrix.branch }}-${{ steps.ksrc.outputs.kver }}
+          path: |
+            rknpu-module/rknpu.ko
+            rknpu-module/Module.symvers
+          if-no-files-found: error
