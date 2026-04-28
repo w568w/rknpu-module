@@ -25,16 +25,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Armbian kernel headers
+      - name: Install Armbian kernel headers (DietPi apt)
         env:
           FLAVOR: ${{ github.event.inputs.kernel_flavor || matrix.flavor }}
         run: |
           set -euo pipefail
           sudo install -m 0755 -d /etc/apt/keyrings
-          curl -fsSL https://apt.armbian.com/armbian.key | \
-            sudo gpg --dearmor -o /etc/apt/keyrings/armbian.gpg
-          echo "deb [signed-by=/etc/apt/keyrings/armbian.gpg] https://apt.armbian.com noble main ${FLAVOR}-utils" | \
-            sudo tee /etc/apt/sources.list.d/armbian.list
+          sudo install -m 0644 .github/dietpi.asc /etc/apt/keyrings/dietpi.asc
+          echo "deb [signed-by=/etc/apt/keyrings/dietpi.asc] https://dietpi.com/apt all orangepi3b" | \
+            sudo tee /etc/apt/sources.list.d/dietpi.list
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             "linux-headers-${FLAVOR}-rockchip64" build-essential bc
