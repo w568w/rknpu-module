@@ -16,6 +16,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/version.h>
+#include <linux/limits.h>
 
 #include "rknpu_drv.h"
 #include "rknpu_devfreq.h"
@@ -28,6 +29,7 @@
 /*  The governor simply forwards that frequency to the devfreq core.  */
 /* ------------------------------------------------------------------ */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 static int devfreq_rknpu_ondemand_func(struct devfreq *df,
 				       unsigned long *freq)
 {
@@ -52,6 +54,22 @@ static struct devfreq_governor devfreq_rknpu_ondemand = {
 	.get_target_freq = devfreq_rknpu_ondemand_func,
 	.event_handler = devfreq_rknpu_ondemand_handler,
 };
+#define RKNPU_GOVERNOR_NAME "rknpu_ondemand"
+#define RKNPU_DEVFREQ_DATA ((void *)rknpu_dev)
+#else
+/*
+ * Before 6.19 the devfreq governor API lives in drivers/devfreq/governor.h
+ * and devfreq_add_governor() is not exported to modules, so an out-of-tree
+ * driver cannot register its own governor.  Fall back to the in-tree
+ * simple_ondemand governor: the OPP table still comes from the DTB, and DVFS
+ * keeps working off the device busy/idle accounting.
+ */
+#define RKNPU_GOVERNOR_NAME "simple_ondemand"
+/* simple_ondemand reads df->data as devfreq_simple_ondemand_data:
+ * handing it rknpu_device makes upthreshold/downdifferential garbage
+ * and every poll ends in -EINVAL ("dvfs failed"). Pass NULL instead. */
+#define RKNPU_DEVFREQ_DATA NULL
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  devfreq profile callbacks                                         */
@@ -197,21 +215,50 @@ int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
 
 	dp->initial_freq = rknpu_dev->current_freq;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	ret = devfreq_add_governor(&devfreq_rknpu_ondemand);
 	if (ret) {
 		LOG_DEV_ERROR(dev, "failed to add rknpu_ondemand governor: %d\n",
 			      ret);
 		return ret;
 	}
+#endif
 
 	rknpu_dev->devfreq = devm_devfreq_add_device(dev, dp,
-						      "rknpu_ondemand",
-						      (void *)rknpu_dev);
+						      RKNPU_GOVERNOR_NAME,
+						      RKNPU_DEVFREQ_DATA);
 	if (IS_ERR(rknpu_dev->devfreq)) {
 		LOG_DEV_ERROR(dev, "failed to add devfreq device\n");
 		ret = PTR_ERR(rknpu_dev->devfreq);
 		rknpu_dev->devfreq = NULL;
 		goto err_remove_governor;
+	}
+
+	/*
+	 * devfreq needs a frequency window. Without one, simple_ondemand asks for
+	 * 0 Hz, devfreq_recommended_opp() returns -EINVAL and the governor logs
+	 * "dvfs failed with (-22) error" every polling interval (50 ms), flooding
+	 * the console. Take the range straight from the OPP table.
+	 */
+	{
+		unsigned long lo = 0, hi = ULONG_MAX;
+		struct dev_pm_opp *o;
+
+		o = dev_pm_opp_find_freq_ceil(dev, &lo);
+		if (!IS_ERR(o)) {
+			lo = dev_pm_opp_get_freq(o);
+			dev_pm_opp_put(o);
+		}
+		o = dev_pm_opp_find_freq_floor(dev, &hi);
+		if (!IS_ERR(o)) {
+			hi = dev_pm_opp_get_freq(o);
+			dev_pm_opp_put(o);
+		}
+		if (lo && hi != ULONG_MAX && hi >= lo) {
+			rknpu_dev->devfreq->scaling_min_freq = lo;
+			rknpu_dev->devfreq->scaling_max_freq = hi;
+			LOG_DEV_INFO(dev, "devfreq range: %lu-%lu Hz\n", lo, hi);
+		}
 	}
 
 	rknpu_dev->current_freq = clk_get_rate(rknpu_dev->clks[0].clk);
@@ -233,15 +280,19 @@ int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
 	return 0;
 
 err_remove_governor:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	devfreq_remove_governor(&devfreq_rknpu_ondemand);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL(rknpu_devfreq_init);
 
 void rknpu_devfreq_remove(struct rknpu_device *rknpu_dev)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	if (rknpu_dev->devfreq)
 		devfreq_remove_governor(&devfreq_rknpu_ondemand);
+#endif
 }
 EXPORT_SYMBOL(rknpu_devfreq_remove);
 
