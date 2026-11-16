@@ -9,13 +9,16 @@
  * have been removed.
  */
 
+#include <linux/version.h>
 #include <linux/clk.h>
 #include <linux/devfreq.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 #include <linux/devfreq-governor.h>
+#endif
 #include <linux/pm_opp.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
-#include <linux/version.h>
+#include <linux/limits.h>
 
 #include "rknpu_drv.h"
 #include "rknpu_devfreq.h"
@@ -28,6 +31,7 @@
 /*  The governor simply forwards that frequency to the devfreq core.  */
 /* ------------------------------------------------------------------ */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 static int devfreq_rknpu_ondemand_func(struct devfreq *df,
 				       unsigned long *freq)
 {
@@ -52,6 +56,7 @@ static struct devfreq_governor devfreq_rknpu_ondemand = {
 	.get_target_freq = devfreq_rknpu_ondemand_func,
 	.event_handler = devfreq_rknpu_ondemand_handler,
 };
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  devfreq profile callbacks                                         */
@@ -197,6 +202,7 @@ int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
 
 	dp->initial_freq = rknpu_dev->current_freq;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	ret = devfreq_add_governor(&devfreq_rknpu_ondemand);
 	if (ret) {
 		LOG_DEV_ERROR(dev, "failed to add rknpu_ondemand governor: %d\n",
@@ -206,7 +212,16 @@ int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
 
 	rknpu_dev->devfreq = devm_devfreq_add_device(dev, dp,
 						      "rknpu_ondemand",
-						      (void *)rknpu_dev);
+						      rknpu_dev);
+#else
+	/*
+	 * governor.h is not installed with the kernel headers, so older kernels
+	 * cannot register a custom governor from a module.  Use simple_ondemand
+	 * with its default tunables (NULL data).
+	 */
+	rknpu_dev->devfreq = devm_devfreq_add_device(dev, dp, "simple_ondemand",
+						     NULL);
+#endif
 	if (IS_ERR(rknpu_dev->devfreq)) {
 		LOG_DEV_ERROR(dev, "failed to add devfreq device\n");
 		ret = PTR_ERR(rknpu_dev->devfreq);
@@ -233,15 +248,19 @@ int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
 	return 0;
 
 err_remove_governor:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	devfreq_remove_governor(&devfreq_rknpu_ondemand);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL(rknpu_devfreq_init);
 
 void rknpu_devfreq_remove(struct rknpu_device *rknpu_dev)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 	if (rknpu_dev->devfreq)
 		devfreq_remove_governor(&devfreq_rknpu_ondemand);
+#endif
 }
 EXPORT_SYMBOL(rknpu_devfreq_remove);
 
