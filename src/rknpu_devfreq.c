@@ -3,7 +3,10 @@
  * Copyright (C) Rockchip Electronics Co., Ltd.
  * Author: Finley Xiao <finley.xiao@rock-chips.com>
  *
- * Ported to the mainline devfreq/OPP APIs for use as an out-of-tree module.
+ * Rewritten for mainline kernel (out-of-tree module) using standard
+ * Linux devfreq / OPP APIs.  All Rockchip-private helpers
+ * (rockchip_opp_select, rockchip_system_monitor, rockchip_ipa, etc.)
+ * have been removed.
  */
 
 #include <linux/version.h>
@@ -19,6 +22,14 @@
 
 #include "rknpu_drv.h"
 #include "rknpu_devfreq.h"
+
+/* ------------------------------------------------------------------ */
+/*  Custom "rknpu_ondemand" governor                                  */
+/*                                                                    */
+/*  The driver sets rknpu_dev->ondemand_freq whenever a job is        */
+/*  submitted (ramp up) or the idle timer fires (ramp down).          */
+/*  The governor simply forwards that frequency to the devfreq core.  */
+/* ------------------------------------------------------------------ */
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 19, 0)
 static int devfreq_rknpu_ondemand_func(struct devfreq *df,
@@ -46,6 +57,10 @@ static struct devfreq_governor devfreq_rknpu_ondemand = {
 	.event_handler = devfreq_rknpu_ondemand_handler,
 };
 #endif
+
+/* ------------------------------------------------------------------ */
+/*  devfreq profile callbacks                                         */
+/* ------------------------------------------------------------------ */
 
 static int npu_devfreq_target(struct device *dev, unsigned long *freq,
 			      u32 flags)
@@ -91,7 +106,10 @@ static int npu_devfreq_get_dev_status(struct device *dev,
 
 	stat->current_frequency = rknpu_dev->current_freq;
 
-	/* busy_time summed over subcores, refreshed every RKNPU_LOAD_INTERVAL */
+	/*
+	 * Aggregate busy_time across all subcores.  The hrtimer handler
+	 * snapshots total_busy_time every RKNPU_LOAD_INTERVAL (1 s).
+	 */
 	for (int i = 0; i < rknpu_dev->config->num_irqs; i++) {
 		subcore_data = &rknpu_dev->subcore_datas[i];
 		spin_lock_irqsave(&rknpu_dev->irq_lock, flags);
@@ -121,6 +139,10 @@ static struct devfreq_dev_profile npu_devfreq_profile = {
 	.get_cur_freq = npu_devfreq_get_cur_freq,
 };
 
+/* ------------------------------------------------------------------ */
+/*  Public API consumed by rknpu_drv.c                                */
+/* ------------------------------------------------------------------ */
+
 void rknpu_devfreq_lock(struct rknpu_device *rknpu_dev)
 {
 	if (rknpu_dev->devfreq)
@@ -143,7 +165,13 @@ int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
 	int ret;
 	static const char * const reg_names[] = { "rknpu", NULL };
 
-	/* "rknpu" is the DT supply name; "scmi_clk" carries the real rate. */
+	/*
+	 * Tell the OPP framework which regulator and clock to manage.
+	 * "rknpu" matches the DT property "rknpu-supply = <&vdd_npu>".
+	 * "scmi_clk" is the first clock in the NPU node's clocks list
+	 * and the one whose rate actually controls the NPU frequency
+	 * through the SCMI firmware.
+	 */
 	ret = devm_pm_opp_set_regulators(dev, reg_names);
 	if (ret) {
 		LOG_DEV_ERROR(dev, "failed to set OPP regulators: %d\n", ret);
